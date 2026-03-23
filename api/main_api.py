@@ -1,8 +1,9 @@
 import os
 from fastapi import FastAPI, Depends, HTTPException
-from fastapi.middleware.cors import CORSMiddleware # 👈 1. Importamos esto
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
+from typing import Optional # 🚨 1. IMPORTANTE: Importamos Optional para los filtros
 
 from database.session import DatabaseManager
 from services.matchmaker import MatchmakerService
@@ -16,41 +17,50 @@ app = FastAPI(
     version="1.0.0"
 )
 
-# 👇 2. AGREGAMOS EL PERMISO CORS (Copia y pega este bloque)
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # En producción se pone la URL de tu frontend, por ahora "*" permite todo
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-# ---------------------------------------------------------
 
 def get_db():
     with db_manager.get_session() as session:
         yield session
 
-# --- ENDPOINTS (Las puertas de acceso a tu app) ---
-
 @app.get("/")
 def health_check():
-    """Verifica que el servidor esté vivo."""
     return {"status": "online", "message": "El motor de Mash-upgradde está escuchando..."}
 
+# 🚨 2. ACTUALIZAMOS EL ENDPOINT DEL PUENTE LÉXICO
 @app.get("/api/v1/mashup/bridge")
-def get_acapella_bridge(word: str, db: Session = Depends(get_db)):
+def get_acapella_bridge(
+    word: str, 
+    genre: Optional[str] = None, # 👈 Aceptamos género opcional
+    year: Optional[str] = None,  # 👈 Aceptamos año opcional (lo recibimos como string)
+    db: Session = Depends(get_db)
+):
     """
-    Busca puentes a capela (Acapella Bridges) para una palabra específica.
-    Ejemplo de uso en el navegador: http://localhost:8000/api/v1/mashup/bridge?word=noche
+    Busca puentes a capela filtrados por género y año.
+    Ejemplo: .../bridge?word=noche&genre=Trap&year=2024
     """
     matchmaker = MatchmakerService(db)
-    resultados = matchmaker.get_acapella_bridges(target_word=word)
+    
+    # 🚨 3. IMPORTANTE: Le pasamos los nuevos filtros al servicio
+    resultados = matchmaker.get_acapella_bridges(
+        target_word=word, 
+        genre=genre, 
+        year=year
+    )
     
     if not resultados:
-        raise HTTPException(status_code=404, detail=f"No se encontraron canciones con la palabra '{word}'")
+        # Mensaje de error ajustado para indicar que no hay matches CON los filtros aplicados
+        raise HTTPException(status_code=404, detail=f"No se encontraron canciones con la palabra '{word}' usando los filtros seleccionados.")
     
     return {
         "target_word": word,
+        "applied_filters": {"genre": genre, "year": year}, # Útil para que el frontend sepa qué aplicó
         "total_matches": len(resultados),
         "matches": resultados
     }

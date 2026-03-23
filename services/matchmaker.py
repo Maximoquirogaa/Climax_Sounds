@@ -1,6 +1,6 @@
 import logging
 from dataclasses import dataclass
-from typing import List, Dict
+from typing import List, Dict, Optional # 👈 1. Agregamos Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 
@@ -23,7 +23,7 @@ class TwinResult:
     artist_name: str
     genre: str
     shared_words: int
-    score: int # Suma de frecuencias de las palabras compartidas
+    score: int
 
 class MatchmakerService:
     """
@@ -33,20 +33,20 @@ class MatchmakerService:
     def __init__(self, db_session: Session):
         self.db = db_session
 
-    def get_acapella_bridges(self, target_word: str, limit_per_genre: int = 3) -> List[BridgeResult]:
+    # 👇 2. Modificamos la firma para recibir genre y year
+    def get_acapella_bridges(self, target_word: str, genre: Optional[str] = None, year: Optional[str] = None, limit_per_genre: int = 3) -> List[BridgeResult]:
         """
-        ALGORITMO 1: Búsqueda de anclas directas.
-        Encuentra las canciones que más repiten una palabra específica.
+        ALGORITMO 1: Búsqueda de anclas directas con filtros dinámicos.
         """
         target_word = target_word.lower().strip()
         
-        # 1. Buscamos el ID de la palabra (mucho más rápido que hacer JOIN por texto)
+        # 1. Buscamos el ID de la palabra
         word_obj = self.db.query(Dictionary).filter(Dictionary.word_text == target_word).first()
         if not word_obj:
             logger.warning(f"La palabra '{target_word}' no existe en la base de datos.")
             return []
 
-        # 2. Query Avanzada con SQLAlchemy (Equivalente a 4 JOINs en SQL)
+        # 2. Query Base con SQLAlchemy
         query = (
             self.db.query(
                 Song.title,
@@ -58,13 +58,26 @@ class MatchmakerService:
             .join(Artist, Song.artist_id == Artist.id)
             .join(Genre, Artist.genre_id == Genre.id)
             .filter(WordFrequency.word_id == word_obj.id)
-            .order_by(desc(WordFrequency.occurrence_count))
-            .limit(limit_per_genre * 5) # Traemos de sobra para luego filtrar en memoria
         )
+
+        # 🚨 3. APLICAMOS LOS FILTROS DINÁMICOS (La Magia) 🚨
+        if genre:
+            # Filtramos comparando con la tabla Genre usando ilike (ignora mayúsculas/minúsculas)
+            query = query.filter(Genre.name.ilike(f"%{genre}%"))
+
+        if year:
+            if year == 'retro':
+                query = query.filter(Song.release_year < 2010)
+            else:
+                # Convertimos el string a entero para compararlo en la BD
+                query = query.filter(Song.release_year == int(year))
+
+        # 4. Terminamos la query agregando el ordenamiento y el límite
+        query = query.order_by(desc(WordFrequency.occurrence_count)).limit(limit_per_genre * 5)
 
         results = query.all()
         
-        # 3. Mapeo al DTO para que la respuesta sea un objeto limpio
+        # 5. Mapeo al DTO
         bridges = [
             BridgeResult(
                 word=target_word,
