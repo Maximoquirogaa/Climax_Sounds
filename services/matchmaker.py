@@ -1,4 +1,5 @@
 import logging
+import unicodedata
 from dataclasses import dataclass
 from typing import List, Dict, Optional # 👈 1. Agregamos Optional
 from sqlalchemy.orm import Session
@@ -34,30 +35,39 @@ class MatchmakerService:
         self.db = db_session
 
     # 👇 2. Modificamos la firma para recibir genre y year
-    def get_acapella_bridges(self, target_word: str, genre: Optional[str] = None, year: Optional[str] = None, limit_per_genre: int = 3) -> List[BridgeResult]:
-        """
-        ALGORITMO 1: Búsqueda de anclas directas con filtros dinámicos.
-        """
-        target_word = target_word.lower().strip()
+def get_acapella_bridges(self, target_word: str, genre: Optional[str] = None, year: Optional[str] = None, limit_per_genre: int = 3) -> List[BridgeResult]:
         
-        # 1. Buscamos el ID de la palabra
-        word_obj = self.db.query(Dictionary).filter(Dictionary.word_text == target_word).first()
-        if not word_obj:
-            logger.warning(f"La palabra '{target_word}' no existe en la base de datos.")
+        # 1. 🚨 LA ASPIRADORA EN EL BUSCADOR 🚨
+        # Limpiamos lo que escribió el usuario (pasamos a minúscula y matamos tildes)
+        target_word = target_word.lower().strip()
+        target_word = ''.join(c for c in unicodedata.normalize('NFD', target_word) if unicodedata.category(c) != 'Mn')
+
+        # 2. 🚨 BÚSQUEDA FLEXIBLE (SABE vs SABES) 🚨
+        # En vez de usar "==", usamos "ilike" con el comodín "%". 
+        # Si busca "sabe", va a encontrar "sabe", "sabes", "sabemos", "saben".
+        word_objs = self.db.query(Dictionary).filter(Dictionary.word_text.ilike(f"{target_word}%")).all()
+        
+        if not word_objs:
+            logger.warning(f"La raíz léxica '{target_word}' no existe en la BD.")
             return []
 
-        # 2. Query Base con SQLAlchemy
+        # Como ahora podemos encontrar múltiples palabras (ej: sabe, sabes), 
+        # sacamos todos sus IDs para buscar las canciones que tengan cualquiera de ellas
+        word_ids = [w.id for w in word_objs]
+
+        # 3. Query Base con SQLAlchemy
         query = (
             self.db.query(
                 Song.title,
                 Artist.name.label("artist_name"),
                 Genre.name.label("genre_name"),
-                WordFrequency.occurrence_count
+                func.sum(WordFrequency.occurrence_count).label("occurrence_count") # Sumamos si aparece "sabe" y "sabes" en la misma canción
             )
             .join(WordFrequency, Song.id == WordFrequency.song_id)
             .join(Artist, Song.artist_id == Artist.id)
             .join(Genre, Artist.genre_id == Genre.id)
-            .filter(WordFrequency.word_id == word_obj.id)
+            .filter(WordFrequency.word_id.in_(word_ids)) # Buscamos cualquiera de las variaciones
+            .group_by(Song.id, Artist.id, Genre.id) # Agrupamos para no tener duplicados
         )
 
         # 🚨 3. APLICAMOS LOS FILTROS DINÁMICOS (La Magia) 🚨
