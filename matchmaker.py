@@ -1,7 +1,7 @@
 import logging
 import unicodedata
 from dataclasses import dataclass
-from typing import List, Dict, Optional
+from typing import List, Optional
 from sqlalchemy.orm import Session
 from sqlalchemy import func, desc
 
@@ -36,11 +36,10 @@ class MatchmakerService:
 
     def get_acapella_bridges(self, target_word: str, genre: Optional[str] = None, year: Optional[str] = None, limit_per_genre: int = 3) -> List[BridgeResult]:
         
-        # 1. 🚨 LA ASPIRADORA EN EL BUSCADOR 🚨
+        # 1. Aspiradora de Tildes
         target_word = target_word.lower().strip()
         target_word = ''.join(c for c in unicodedata.normalize('NFD', target_word) if unicodedata.category(c) != 'Mn')
 
-        # 2. 🚨 BÚSQUEDA FLEXIBLE (SABE vs SABES) 🚨
         word_objs = self.db.query(Dictionary).filter(Dictionary.word_text.ilike(f"{target_word}%")).all()
         
         if not word_objs:
@@ -49,13 +48,16 @@ class MatchmakerService:
 
         word_ids = [w.id for w in word_objs]
 
-        # 3. Query Base con SQLAlchemy (Blindada para Postgres)
+        # 🚨 LA SOLUCIÓN DEFINITIVA: Creamos la columna sumada como una variable 🚨
+        occ_count_col = func.sum(WordFrequency.occurrence_count).label("occurrence_count")
+
+        # 3. Query Base
         query = (
             self.db.query(
                 Song.title,
                 Artist.name.label("artist_name"),
                 Genre.name.label("genre_name"),
-                func.sum(WordFrequency.occurrence_count).label("occurrence_count")
+                occ_count_col # La inyectamos acá
             )
             .join(WordFrequency, Song.id == WordFrequency.song_id)
             .join(Artist, Song.artist_id == Artist.id)
@@ -64,7 +66,6 @@ class MatchmakerService:
             .group_by(Song.id, Song.title, Artist.id, Artist.name, Genre.id, Genre.name)
         )
 
-        # 🚨 APLICAMOS LOS FILTROS DINÁMICOS 🚨
         if genre and genre.strip():
             query = query.filter(Genre.name.ilike(f"%{genre.strip()}%"))
 
@@ -74,12 +75,11 @@ class MatchmakerService:
             else:
                 query = query.filter(Song.release_year == int(year))
 
-        # 4. El ordenamiento
-        query = query.order_by(desc(func.sum(WordFrequency.occurrence_count))).limit(limit_per_genre * 5)
+        # 4. El ordenamiento: Usamos LA MISMA variable .desc() para que SQLAlchemy no llore
+        query = query.order_by(occ_count_col.desc()).limit(limit_per_genre * 5)
 
         results = query.all()
         
-        # 5. Mapeo al DTO
         bridges = [
             BridgeResult(
                 word=target_word,
@@ -92,22 +92,18 @@ class MatchmakerService:
         ]
         return bridges
 
+
     def get_harmonic_twins(self, song_title: str, top_dna_words: int = 10) -> List[TwinResult]:
-        """
-        ALGORITMO 2: Matchmaking Compuesto.
-        Compara el 'ADN' de una canción con toda la base de datos.
-        """
-        # 1. Buscar la canción origen
         source_song = self.db.query(Song).filter(Song.title.ilike(f"%{song_title}%")).first()
         if not source_song:
             logger.error(f"Canción '{song_title}' no encontrada.")
             return []
 
-        # 2. Extraer el "ADN Léxico"
+        # Extraer ADN (Acá también actualizamos el desc() a la versión moderna)
         dna_frequencies = (
             self.db.query(WordFrequency.word_id)
             .filter(WordFrequency.song_id == source_song.id)
-            .order_by(desc(WordFrequency.occurrence_count))
+            .order_by(WordFrequency.occurrence_count.desc())
             .limit(top_dna_words)
             .all()
         )
@@ -116,24 +112,27 @@ class MatchmakerService:
         if not dna_word_ids:
             return []
 
-        # 3. La Magia SQL: Buscar intersecciones (AHORA SÍ, BLINDADA PARA POSTGRES)
+        # 🚨 LA MAGIA PARA LOS GEMELOS: Variables para conteo y suma 🚨
+        shared_words_col = func.count(WordFrequency.word_id).label("shared_words")
+        score_col = func.sum(WordFrequency.occurrence_count).label("score")
+
         match_query = (
             self.db.query(
                 Song.title,
                 Artist.name.label("artist_name"),
                 Genre.name.label("genre_name"),
-                func.count(WordFrequency.word_id).label("shared_words"),
-                func.sum(WordFrequency.occurrence_count).label("score")
+                shared_words_col,
+                score_col
             )
             .join(Artist, Song.artist_id == Artist.id)
             .join(Genre, Artist.genre_id == Genre.id)
             .join(WordFrequency, Song.id == WordFrequency.song_id)
             .filter(WordFrequency.word_id.in_(dna_word_ids))
             .filter(Song.id != source_song.id)
-            # 🚨 Corrección crucial preventiva para evitar el error f405 acá también
             .group_by(Song.id, Song.title, Artist.id, Artist.name, Genre.id, Genre.name)
-            .having(func.count(WordFrequency.word_id) >= 3)
-            .order_by(desc(func.count(WordFrequency.word_id)), desc(func.sum(WordFrequency.occurrence_count)))
+            .having(shared_words_col >= 3)
+            # Ordenamos usando las variables limpias
+            .order_by(shared_words_col.desc(), score_col.desc())
             .limit(5)
         )
 
