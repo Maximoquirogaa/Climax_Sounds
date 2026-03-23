@@ -3,7 +3,7 @@ import unicodedata
 from dataclasses import dataclass
 from typing import List, Optional
 from sqlalchemy.orm import Session
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, text # 🚨 Agregamos 'text' acá 🚨
 
 from database.models import Song, Artist, Genre, WordFrequency, Dictionary
 
@@ -48,16 +48,13 @@ class MatchmakerService:
 
         word_ids = [w.id for w in word_objs]
 
-        # 🚨 LA SOLUCIÓN DEFINITIVA: Creamos la columna sumada como una variable 🚨
-        occ_count_col = func.sum(WordFrequency.occurrence_count).label("occurrence_count")
-
         # 3. Query Base
         query = (
             self.db.query(
                 Song.title,
                 Artist.name.label("artist_name"),
                 Genre.name.label("genre_name"),
-                occ_count_col # La inyectamos acá
+                func.sum(WordFrequency.occurrence_count).label("occurrence_count")
             )
             .join(WordFrequency, Song.id == WordFrequency.song_id)
             .join(Artist, Song.artist_id == Artist.id)
@@ -75,8 +72,8 @@ class MatchmakerService:
             else:
                 query = query.filter(Song.release_year == int(year))
 
-        # 4. El ordenamiento: Usamos LA MISMA variable .desc() para que SQLAlchemy no llore
-        query = query.order_by(occ_count_col.desc()).limit(limit_per_genre * 5)
+        # 4. LA OPCIÓN NUCLEAR: Usamos text() para obligar a Postgres a ordenar 
+        query = query.order_by(text("occurrence_count DESC")).limit(limit_per_genre * 5)
 
         results = query.all()
         
@@ -99,7 +96,7 @@ class MatchmakerService:
             logger.error(f"Canción '{song_title}' no encontrada.")
             return []
 
-        # Extraer ADN (Acá también actualizamos el desc() a la versión moderna)
+        # Extraer ADN
         dna_frequencies = (
             self.db.query(WordFrequency.word_id)
             .filter(WordFrequency.song_id == source_song.id)
@@ -112,17 +109,13 @@ class MatchmakerService:
         if not dna_word_ids:
             return []
 
-        # 🚨 LA MAGIA PARA LOS GEMELOS: Variables para conteo y suma 🚨
-        shared_words_col = func.count(WordFrequency.word_id).label("shared_words")
-        score_col = func.sum(WordFrequency.occurrence_count).label("score")
-
         match_query = (
             self.db.query(
                 Song.title,
                 Artist.name.label("artist_name"),
                 Genre.name.label("genre_name"),
-                shared_words_col,
-                score_col
+                func.count(WordFrequency.word_id).label("shared_words"),
+                func.sum(WordFrequency.occurrence_count).label("score")
             )
             .join(Artist, Song.artist_id == Artist.id)
             .join(Genre, Artist.genre_id == Genre.id)
@@ -130,9 +123,9 @@ class MatchmakerService:
             .filter(WordFrequency.word_id.in_(dna_word_ids))
             .filter(Song.id != source_song.id)
             .group_by(Song.id, Song.title, Artist.id, Artist.name, Genre.id, Genre.name)
-            .having(shared_words_col >= 3)
-            # Ordenamos usando las variables limpias
-            .order_by(shared_words_col.desc(), score_col.desc())
+            .having(func.count(WordFrequency.word_id) >= 3)
+            # 🚨 OTRA OPCIÓN NUCLEAR ACÁ PARA LOS GEMELOS 🚨
+            .order_by(text("shared_words DESC"), text("score DESC"))
             .limit(5)
         )
 
