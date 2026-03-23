@@ -1,23 +1,31 @@
 import os
 from fastapi import FastAPI, Depends, HTTPException
+from fastapi.middleware.cors import CORSMiddleware # 👈 1. Importamos esto
 from sqlalchemy.orm import Session
 from dotenv import load_dotenv
 
 from database.session import DatabaseManager
 from services.matchmaker import MatchmakerService
 
-# 1. Inicializamos el entorno y la conexión
 load_dotenv()
 db_manager = DatabaseManager(os.getenv("DATABASE_URL"))
 
-# 2. Creamos la aplicación FastAPI
 app = FastAPI(
     title="Mash-upgradde API 🎧",
     description="Motor relacional de transiciones léxicas y armónicas para DJs",
     version="1.0.0"
 )
 
-# 3. Dependencia: Generador de sesiones seguras para cada petición web
+# 👇 2. AGREGAMOS EL PERMISO CORS (Copia y pega este bloque)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"], # En producción se pone la URL de tu frontend, por ahora "*" permite todo
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+# ---------------------------------------------------------
+
 def get_db():
     with db_manager.get_session() as session:
         yield session
