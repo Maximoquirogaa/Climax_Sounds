@@ -29,7 +29,6 @@ class SpotifyAudioFeaturesFetcher:
     }
 
     def __init__(self, client_id: str, client_secret: str):
-        # Autenticación segura de servidor a servidor (Sin login de usuario)
         auth_manager = SpotifyClientCredentials(
             client_id=client_id, 
             client_secret=client_secret
@@ -37,7 +36,6 @@ class SpotifyAudioFeaturesFetcher:
         self.sp = spotipy.Spotify(auth_manager=auth_manager)
         
     def _translate_to_camelot(self, key: int, mode: int) -> str:
-        """Convierte los enteros crudos de Spotify a notación DJ."""
         if key < 0 or key > 11:
             return "Unknown"
         
@@ -47,15 +45,11 @@ class SpotifyAudioFeaturesFetcher:
             return self.CAMELOT_MINOR.get(key, "Unknown")
 
     def get_song_dj_features(self, artist_name: str, song_title: str) -> Optional[Dict]:
-        """
-        Busca la canción por nombre y artista, y extrae su BPM y Key.
-        """
-        # Limpiamos el título para mejorar la búsqueda (sacamos "(En Vivo)", etc.)
+        
         clean_title = song_title.split("(")[0].strip()
         query = f"track:{clean_title} artist:{artist_name}"
         
         try:
-            # 1. Buscar el Track ID
             result = self.sp.search(q=query, type='track', limit=1)
             tracks = result.get('tracks', {}).get('items', [])
             
@@ -65,13 +59,11 @@ class SpotifyAudioFeaturesFetcher:
                 
             track_id = tracks[0]['id']
             
-            # 2. Obtener las "Audio Features" con ese ID
             features = self.sp.audio_features([track_id])[0]
             
             if not features:
                 return None
-                
-            # 3. Empaquetar y traducir
+
             return {
                 "bpm": round(features['tempo'], 2),
                 "camelot_key": self._translate_to_camelot(features['key'], features['mode'])
