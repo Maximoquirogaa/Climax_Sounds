@@ -31,7 +31,6 @@ class MatchmakerService:
 
     def get_acapella_bridges(self, target_word: str, genre: Optional[str] = None, year: Optional[str] = None, limit_per_genre: int = 3) -> List[BridgeResult]:
         
-        # 1. Aspiradora de tildes
         target_word = target_word.lower().strip()
         target_word = ''.join(c for c in unicodedata.normalize('NFD', target_word) if unicodedata.category(c) != 'Mn')
 
@@ -41,7 +40,6 @@ class MatchmakerService:
 
         word_ids = [w.id for w in word_objs]
 
-        # 3. Query cruda SIN order_by
         query = (
             self.db.query(
                 Song.title,
@@ -65,7 +63,6 @@ class MatchmakerService:
             else:
                 query = query.filter(Song.release_year == int(year))
 
-        # 🚨 LA MAGIA: Traemos todo sin ordenar para que SQLAlchemy no llore
         results = query.all()
         
         bridges = [
@@ -78,8 +75,6 @@ class MatchmakerService:
             )
             for row in results
         ]
-
-        # 4. Ordenamos con Python en memoria (Cero errores) y cortamos el límite
         bridges.sort(key=lambda x: x.occurrences, reverse=True)
         return bridges[:limit_per_genre * 5]
 
@@ -101,7 +96,6 @@ class MatchmakerService:
         if not dna_word_ids:
             return []
 
-        # Mismo bypass para los gemelos
         match_query = (
             self.db.query(
                 Song.title,
@@ -132,6 +126,5 @@ class MatchmakerService:
             for row in matches
         ]
 
-        # Ordenamos con Python por cantidad de palabras compartidas, y luego por puntaje
         twins.sort(key=lambda x: (x.shared_words, x.score), reverse=True)
         return twins[:5]
